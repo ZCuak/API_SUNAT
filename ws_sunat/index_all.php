@@ -1,88 +1,75 @@
 <?php
-error_reporting(E_ERROR | E_WARNING | E_PARSE);
+// Configurar error_reporting para solo mostrar errores críticos
+error_reporting(E_ERROR | E_PARSE);
 
-require('lib/pclzip.lib.php'); // Librería que comprime archivos en .ZIP
-//NOMBRE DE ARCHIVO A PROCESAR.
-//$NomArch = '20604051984-01-F001-131';
-//$ruta = '../files/facturacion_electronica/FIRMA/';
+// NOMBRE DE ARCHIVO A PROCESAR
+$serie = $_GET['cod_7'] ?? '';
+$NomArch = $_GET['numero_documento'] ?? '';
 
+if (empty($NomArch)) {
+    die(json_encode(['success' => false, 'message' => 'Número de documento no proporcionado.']));
+}
 
-$serie = $_GET['cod_7'];
-$NomArch = $_GET['numero_documento'];
-//$ruta = ($_GET['cod_6'] == '0') ? '../files/facturacion_electronica/FIRMA/' : '../files/facturacion_electronica/BAJA/FIRMA/' ;
+// Definir la ruta y el método según el código de acción (cod_6)
 switch ($_GET['cod_6']) {
     case 1:
         $ruta = '../files/facturacion_electronica/FIRMA/';
-        $metodo = 'sendBill';   //hacer facturas o boletas
+        $metodo = 'sendBill';   // Facturas o boletas
         break;
     case 2:
         $ruta = '../files/facturacion_electronica/BAJA/FIRMA/';
-        $metodo = 'sendSummary';    //enviar anulación
+        $metodo = 'sendSummary';    // Enviar anulación
         break;
     case 3:
         $ruta = '../files/facturacion_electronica/BAJA/RPTA/';
-        $metodo = 'getStatus';  //metodo recibie ticket de anulacion
+        $metodo = 'getStatus';  // Método para recibir ticket de anulación
         break;
     case 4:
         $ruta = '../files/facturacion_electronica/FIRMA/';
-        $metodo = 'getStatusCdr';  //pregunta estado CDR        
+        $metodo = 'getStatusCdr';  // Preguntar estado CDR
         break;
+    default:
+        die(json_encode(['success' => false, 'message' => 'Código de acción inválido.']));
 }
 
-//enviar a Sunat       
-//cod_1: Select web Service: 1 factura, boletas --- 9 es para guias
-//cod_2: Entorno:  0 Beta, 1 Produccion
-//cod_3: ruc
-//cod_4: usuario secundario USU(segun seha beta o producción)
-//cod_5: usuario secundario PASSWORD(segun seha beta o producción)
-//cod_6: Accion:   1 enviar documento a Sunat --  2 enviar a anular  --  3 enviar ticket  -- 4 getStatusCDR
-//cod_7: tipo_documento-serie-numero
-//cod_8: numero ticket
-//cod_9: 0: sin OSE //  1: con OSE
-//cod_10: Entorno OSE:  0 Beta, 1 Produccion
-//cod_11: WS OSE
-## =============================================================================
+// Si no es para enviar ticket, crear archivo ZIP usando ZipArchive
+if (in_array($_GET['cod_6'], [1, 2])) {
+    $zip = new ZipArchive();
+    $zipFilePath = $ruta . $NomArch . ".zip";
+    $xmlFilePath = $ruta . $NomArch . ".xml";
 
-//creamos zip siempre queno recibo tickets
-if(($_GET['cod_6'] == 1) || ($_GET['cod_6'] == 2) ){
-    ## Creación del archivo .ZIP
-    $zip = new PclZip($ruta.$NomArch . ".zip");
-    //var_dump($zip);exit;
-
-    if(file_exists($ruta.$NomArch . ".zip")){
-        $r = 1;
-    }else{    
-        $zip->add($ruta.$NomArch.".xml", PCLZIP_OPT_REMOVE_PATH, $ruta, PCLZIP_OPT_ADD_PATH, '');
+    if (file_exists($zipFilePath)) {
+        $r = 1; // El archivo ZIP ya existe
+    } else {
+        if ($zip->open($zipFilePath, ZipArchive::CREATE) === TRUE) {
+            $zip->addFile($xmlFilePath, basename($xmlFilePath)); // Añadir el archivo XML al ZIP
+            $zip->close();
+        } else {
+            die(json_encode(['success' => false, 'message' => 'Error al crear el archivo ZIP.']));
+        }
     }
-
-    //$zip->create($NomArch . ".xml");
-    chmod($ruta.$NomArch . ".zip", 0777);
-    //echo $ruta.$NomArch . ".zip";
-    # ==============================================================================
-    # Procedimiento para enviar comprobante a la SUNAT
+    chmod($zipFilePath, 0777); // Cambiar permisos del archivo ZIP
 }
 
-
+// Generar el contenido en base al tipo de acción (cod_6)
 switch ($_GET['cod_6']) {
     case 1:        
-        $content = '<fileName>' . $NomArch . '.zip</fileName><contentFile>' . base64_encode(file_get_contents($ruta.$NomArch . '.zip')) . '</contentFile>';
-        break;
     case 2:        
-        $content = '<fileName>' . $NomArch . '.zip</fileName><contentFile>' . base64_encode(file_get_contents($ruta.$NomArch . '.zip')) . '</contentFile>';
+        $content = '<fileName>' . $NomArch . '.zip</fileName><contentFile>' . base64_encode(file_get_contents($zipFilePath)) . '</contentFile>';
         break;
-    case 3:        
-        $content = '<ticket>'.$_GET['cod_8'].'</ticket>';
+    case 3:
+        $content = '<ticket>' . $_GET['cod_8'] . '</ticket>';
         break;
-    case 4:        
+    case 4:
         $documento = explode("-", $_GET['numero_documento']);        
-        $content= '<rucComprobante>'.$documento[0].'</rucComprobante>
-        <tipoComprobante>'.$documento[1].'</tipoComprobante>
-        <serieComprobante>'.$documento[2].'</serieComprobante>
-        <numeroComprobante>'.$documento[3].'</numeroComprobante>';
+        $content = '<rucComprobante>' . $documento[0] . '</rucComprobante>
+        <tipoComprobante>' . $documento[1] . '</tipoComprobante>
+        <serieComprobante>' . $documento[2] . '</serieComprobante>
+        <numeroComprobante>' . $documento[3] . '</numeroComprobante>';
         break;
 }
 
-
+// Definir clase para SOAP
 class feedSoap extends SoapClient {
 
     public $XMLStr = "";
@@ -97,178 +84,148 @@ class feedSoap extends SoapClient {
 
     public function __doRequest($request, $location, $action, $version, $one_way = 0) {
         $request = $this->XMLStr;
-        $dom = new DOMDocument('1.0');
-        try {
-            $dom->loadXML($request);
-        } catch (DOMException $e) {
-            die($e->code);
+        $dom = new DOMDocument('1.0', 'UTF-8'); // Definir codificación UTF-8
+
+        if (!$dom->loadXML($request)) {
+            throw new Exception('Error al cargar el XML.');
         }
+
         $request = $dom->saveXML();
-        //Solicitud
-        return parent::__doRequest($request, $location, $action, $version, $one_way = 0);
+        return parent::__doRequest($request, $location, $action, $version, $one_way);
     }
 
     public function SoapClientCall($SOAPXML) {
-        return $this->setXMLStr($SOAPXML);
+        $this->setXMLStr($SOAPXML);
     }
-
 }
 
+// Función para llamada SOAP
 function soapCall($wsdlURL, $callFunction = "", $XMLString) {
     $client = new feedSoap($wsdlURL, array('trace' => true));
-    $reply = $client->SoapClientCall($XMLString);
-    //echo "REQUEST:\n" . $client->__getFunctions() . "\n";
-    $client->__call("$callFunction", array(), array());
-    //$request = prettyXml($client->__getLastRequest());
-    //echo highlight_string($request, true) . "<br/>\n";
+    $client->SoapClientCall($XMLString);
+    $client->__call("$callFunction", array());
     return $client->__getLastResponse();
 }
 
-if($_GET['cod_1'] == 1){
-    //FACTURAS
-    //$wsdlURL = ($_GET['cod_2'] == 1) ? 'https://e-factura.sunat.gob.pe/ol-ti-itcpfegem/billService?wsdl' : 'https://e-beta.sunat.gob.pe/ol-ti-itcpfegem-beta/billService?wsdl';
+// Definir la URL del WSDL basado en el tipo de documento
+$wsdlURL = '';
+if ($_GET['cod_1'] == 1) {
+    // FACTURAS
     $wsdlURL = ($_GET['cod_2'] == 1) ? 'billService.wsdl' : 'https://e-beta.sunat.gob.pe/ol-ti-itcpfegem-beta/billService?wsdl';
-}elseif($_GET['cod_1'] == 9){
-    //GUIAS
+} elseif ($_GET['cod_1'] == 9) {
+    // GUIAS
     $wsdlURL = ($_GET['cod_2'] == 1) ? 'https://e-guiaremision.sunat.gob.pe/ol-ti-itemision-guia-gem/billService?wsdl' : 'https://e-beta.sunat.gob.pe/ol-ti-itemision-guia-gem-beta/billService?wsdl';
+} else {
+    die(json_encode(['success' => false, 'message' => 'Código de documento inválido.']));
 }
 
-//Estructura del XML para la conexión
+// Estructura del XML para la conexión
 $XMLString = '<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ser="http://service.sunat.gob.pe" xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd">
- <soapenv:Header>
-     <wsse:Security>
-         <wsse:UsernameToken>
-             <wsse:Username>'.$_GET['cod_3'].$_GET['cod_4'].'</wsse:Username>
-             <wsse:Password>'.$_GET['cod_5'].'</wsse:Password>
-         </wsse:UsernameToken>
-     </wsse:Security>
- </soapenv:Header>
- <soapenv:Body>
-     <ser:'.$metodo.'>'.$content.'</ser:'. $metodo .'>
- </soapenv:Body>
+    <soapenv:Header>
+        <wsse:Security>
+            <wsse:UsernameToken>
+                <wsse:Username>' . htmlspecialchars($_GET['cod_3'] . $_GET['cod_4']) . '</wsse:Username>
+                <wsse:Password>' . htmlspecialchars($_GET['cod_5']) . '</wsse:Password>
+            </wsse:UsernameToken>
+        </wsse:Security>
+    </soapenv:Header>
+    <soapenv:Body>
+        <ser:' . $metodo . '>' . $content . '</ser:' . $metodo . '>
+    </soapenv:Body>
 </soapenv:Envelope>';
-//echo $XMLString;exit;
 
-function getBetween($string, $start = "", $end = ""){
-    if (strpos($string, $start)) { // required if $start not exist in $string
-        $startCharCount = strpos($string, $start) + strlen($start);
-        $firstSubStr = substr($string, $startCharCount, strlen($string));
-        $endCharCount = strpos($firstSubStr, $end);
-        if ($endCharCount == 0) {
-            $endCharCount = strlen($firstSubStr);
-        }
-        return substr($firstSubStr, 0, $endCharCount);
-    } else {
-        return '';
-    }
-}
-
-function buscoTicket($result){
+// Función para extraer ticket
+function buscoTicket($result) {
     $library = new SimpleXMLElement($result);
     $ns = $library->getDocNamespaces();
     $ext1 = $library->children($ns['soapenv']);
-    $ext2 = $ext1->Body;            
+    $ext2 = $ext1->Body;
     $ext3 = $ext2->children($ns['ser']);
-    $ext4 = $ext3->sendSummaryResponse;        
+    $ext4 = $ext3->sendSummaryResponse;
     $ext5 = $ext4->children();
     $ticket = $ext5->ticket;
 
-    //var_dump($ext5);exit;
     return ($ticket[0]);
 }
 
-//echo 'SOAP de envío al servidor de SUNAT con el método sendBill.';
-//echo $XMLString;
-//Realizamos la llamada a nuestra función
+// Realizamos la llamada a la función SOAP
 $error_mensaje = '';
 $error_existe = 0;
 $result = '';
 
-$result = soapCall($wsdlURL, $callFunction = "sendBill", $XMLString);    
-
-try {        
+try {
+    $result = soapCall($wsdlURL, "sendBill", $XMLString);
     
-    //$result = soapCall($wsdlURL, $callFunction = "sendBill", $XMLString);    
-    //echo $result;exit;
-    //echo "cc";exit;
-    //echo "abcd";exit;
-    
-    //echo '<span style="color: #000000;">' . $result . '</span>';
-    //Descargamos el Archivo Response
     switch ($_GET['cod_6']) {
-        case '1':           
+        case 1:
             $archivo = fopen('C' . $NomArch . '.xml', 'w+');
-            fputs($archivo, $result);
+            fwrite($archivo, $result);
             fclose($archivo);
-            /* LEEMOS EL ARCHIVO XML */
+
             $xml = simplexml_load_file('C' . $NomArch . '.xml');
             foreach ($xml->xpath('//applicationResponse') as $response) {
+                // Procesar respuesta
+            }
 
-            }
-            /* AQUI DESCARGAMOS EL ARCHIVO CDR(CONSTANCIA DE RECEPCIÓN) */
             $cdr = base64_decode($response);
-            $archivo = fopen($ruta.'R-' . $NomArch . '.zip', 'w+');
-            fputs($archivo, $cdr);
+            $archivo = fopen($ruta . 'R-' . $NomArch . '.zip', 'w+');
+            fwrite($archivo, $cdr);
             fclose($archivo);
-            chmod($ruta.'R-' . $NomArch . '.zip', 0777);
-            $archive = new PclZip($ruta.'R-' . $NomArch . '.zip');
-            if ($archive->extract() == 0) {
-                die("Error : " . $archive->errorInfo(true));
+            chmod($ruta . 'R-' . $NomArch . '.zip', 0777);
+
+            $archive = new ZipArchive();
+            if ($archive->open($ruta . 'R-' . $NomArch . '.zip') === TRUE) {
+                $archive->extractTo($ruta);
+                $archive->close();
+                chmod($ruta . 'R-' . $NomArch . '.xml', 0777);
             } else {
-                chmod($ruta.'R-' . $NomArch . '.zip', 0777);
+                throw new Exception("Error: No se pudo extraer el archivo ZIP.");
             }
-            /* Eliminamos el Archivo Response */
             unlink('C' . $NomArch . '.xml');
             break;
-        case '2':
-            $result = buscoTicket($result);    
+        case 2:
+            $result = buscoTicket($result);
             break;
-        case '3':
-            //Respuestas del ticket
-            //0 = Procesó correctamente
-            //98 = En proceso
-            //99 = Proceso con errores
+        case 3:
             $archivo = fopen('C' . $NomArch . '.xml', 'w+');
-            fputs($archivo, $result);
+            fwrite($archivo, $result);
             fclose($archivo);
-            /* LEEMOS EL ARCHIVO XML */
+
             $xml = simplexml_load_file('C' . $NomArch . '.xml');
             foreach ($xml->xpath('//content') as $response) {
+                // Procesar contenido
+            }
 
-            }
-            /* AQUI DESCARGAMOS EL ARCHIVO CDR(CONSTANCIA DE RECEPCIÓN) */
             $cdr = base64_decode($response);
-            $archivo = fopen($ruta.'R-' . $NomArch . '.zip', 'w+');
-            fputs($archivo, $cdr);
+            $archivo = fopen($ruta . 'R-' . $NomArch . '.zip', 'w+');
+            fwrite($archivo, $cdr);
             fclose($archivo);
-            chmod($ruta.'R-' . $NomArch . '.zip', 0777);
-            $archive = new PclZip($ruta.'R-' . $NomArch . '.zip');
-            if ($archive->extract() == 0) {
-                die("Error : " . $archive->errorInfo(true));
+
+            $archive = new ZipArchive();
+            if ($archive->open($ruta . 'R-' . $NomArch . '.zip') === TRUE) {
+                $archive->extractTo($ruta);
+                $archive->close();
             } else {
-                chmod('R-' . $NomArch . '.xml', 0777);
+                throw new Exception("Error: No se pudo extraer el archivo ZIP.");
             }
-            /* Eliminamos el Archivo Response */
-            //unlink('C' . $NomArch . '.xml');
             break;
-        case '4':
-            $result = ($result);    
-            break;
-    } 
+    }
 } catch (Exception $e) {
     $error_existe = 1;
     $error_mensaje = $e->getMessage();
 }
-//////////////////////////////////////////////////////////////////////////////
-$jsondata = array(
-    'param_ver'     =>  $result,
-    'success'       =>  true,    
-    'error_mensaje' =>  $error_mensaje,
-    'error_existe'  =>  $error_existe
-);
-if($_GET['cod_6'] == 2){
-    $jsondata = array_merge($jsondata, array('ticket' => $result));
+
+// Formatear respuesta JSON
+$jsondata = [
+    'param_ver'     => $result,
+    'success'       => ($error_existe === 0),
+    'error_mensaje' => $error_mensaje,
+    'error_existe'  => $error_existe
+];
+
+if ($_GET['cod_6'] == 2) {
+    $jsondata['ticket'] = $result;
 }
 
 echo json_encode($jsondata, JSON_UNESCAPED_UNICODE);

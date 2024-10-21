@@ -5,17 +5,11 @@ header("HTTP/1.1");
 require 'libraries/Numletras.php';
 require 'libraries/Variables_diversas_model.php';
 require 'libraries/efactura.php';
-
-//require_once ('libraries/fpdf/fpdf.php');
 require_once ('libraries/fpdf/multicell.php');
 require_once ('libraries/qr/phpqrcode/qrlib.php');
 
 $datos = file_get_contents("php://input");
 $obj = json_decode($datos, true);
-
-//echo $datos;exit;
-//var_dump($datos);exit;
-//var_dump($obj);exit;
 
 $empresa        = $obj['empresa'];
 $cliente        = $obj['cliente'];
@@ -57,21 +51,18 @@ if(($venta['tipo_documento_codigo'] == '01') || ($venta['tipo_documento_codigo']
     crear_pdf($empresa, $cliente, $venta, $detalle, $nombre_archivo, $cuotas, $guias_adjuntas, $obj_variables_diversas_model);
 }
 
-//$nombre = FCPATH."/files/facturacion_electronica/XML/".$nombre_archivo.".xml";
-//$nombre = basename(dirname(__FILE__)) . "files/facturacion_electronica/XML/".$nombre_archivo.".xml";
 function crear_xml($nombre, $empresa, $cliente, $venta, $detalle, $cuotas, $guias_adjuntas, $obj_variables_diversas_model){
     $xml = desarrollo_xml($empresa, $cliente, $venta, $detalle, $cuotas, $guias_adjuntas, $obj_variables_diversas_model);
     $archivo = fopen($nombre, "w+");
-    fwrite($archivo, utf8_decode($xml));
+    fwrite($archivo, mb_convert_encoding($xml, 'ISO-8859-1', 'UTF-8'));
     fclose($archivo);
 }
 
 function firmar_xml($name_file, $entorno, $baja = ''){
-    $carpeta_baja = ($baja != '') ? 'BAJA/':'';
+    $carpeta_baja = ($baja != '') ? 'BAJA/':''; 
     $carpeta = "files/facturacion_electronica/$carpeta_baja";
     $dir = $carpeta."XML/".$name_file;
-    //$dir = $name_file;
-    $xmlstr = file_get_contents($dir);    
+    $xmlstr = file_get_contents($dir);
 
     $domDocument = new \DOMDocument();
     $domDocument->loadXML($xmlstr);
@@ -79,17 +70,15 @@ function firmar_xml($name_file, $entorno, $baja = ''){
     $xml = $factura->firmar($domDocument, '', $entorno);
     $content = $xml->saveXML();
     file_put_contents($carpeta."FIRMA/".$name_file, $content);
-    //file_put_contents("xxxxarchivo_firmado_con_certificado".$name_file, $content);
 }
 
 function desarrollo_xml($empresa, $cliente, $venta, $detalles, $cuotas, $guias_adjuntas, $obj_variables_diversas_model){
-    
     $total_igv          = ($venta['total_igv'] != null) ? $venta['total_igv'] : 0.0;
     $total_gravada      = ($venta['total_gravada'] == null)     ? 0 : $venta['total_gravada'];
     $total_exonerada    = ($venta['total_exonerada'] == null)   ? 0 : $venta['total_exonerada'];
     $total_inafecta     = ($venta['total_inafecta'] == null)    ? 0 : $venta['total_inafecta'];    
     $total_a_pagar      = number_format(($total_gravada + $total_exonerada + $total_inafecta + $total_igv), 2, '.', '');
-    
+
     $array_moneda = moneda($venta['moneda_id']);
     $codigo_moneda = $array_moneda[0];
     $descripcion_moneda = $array_moneda[1];
@@ -98,14 +87,13 @@ function desarrollo_xml($empresa, $cliente, $venta, $detalles, $cuotas, $guias_a
     $totalVenta = explode(".", $total_a_pagar);
     $totalLetras = $num->num2letras($totalVenta[0]);
     $venta['total_letras'] = $totalLetras.' con '.$totalVenta[1].'/100 '.$descripcion_moneda;       
-    
+
     $linea_inicio   = '';
     $linea_fin   = '';
     $tag_total_pago = '';
     $dato_nc = '';
     $linea = '';
     $cantidad = '';
-    
     
     switch ($venta['tipo_documento_codigo']) {
         case '01':
@@ -245,7 +233,7 @@ function desarrollo_xml($empresa, $cliente, $venta, $detalles, $cuotas, $guias_a
                 </cac:PartyLegalEntity>
             </cac:Party>
         </cac:AccountingCustomerParty>';
-    
+
         ////////////////////////////////////////DETRACCION --- INICO
         $detraccion = 0;
         if(isset($venta['detraccion_porcentaje']) && ($venta['detraccion_porcentaje'] != '') && ($venta['detraccion_porcentaje'] != null) && ($venta['detraccion_porcentaje'] > 0)){
@@ -352,9 +340,6 @@ function desarrollo_xml($empresa, $cliente, $venta, $detalles, $cuotas, $guias_a
         $taxAmount          = $obj_variables_diversas_model->taxAmount($value['cantidad'], $value['precio_base'], $codigos['codigo_tributo'], $percent, $descuento);
         $price_priceAmount  = $obj_variables_diversas_model->price_priceAmount($value['precio_base'], $codigos['codigo_tributo'], $descuento);
         
-        //sale del catalgo16
-        //PriceAmount precio unitario (precio base x (1 + IGV)) + impuesto por 1 bolsa. (en caso no se pague IGV sera 1 + 0).                
-
         $xml .= '<cac:'.$linea.'>
                 <cbc:ID>'.$i.'</cbc:ID>
                 <cbc:'.$cantidad.' unitCode="NIU">'. number_format($value['cantidad'], 2, '.', '') .'</cbc:'.$cantidad.'>
@@ -424,58 +409,51 @@ function moneda($moneda_id){
 }
 
 function ws_sunat($empresa, $nombre_archivo, $obj_variables_diversas_model){
-        //enviar a Sunat
-        //cod_1: Select web Service: 1 factura, boletas --- 9 es para guias
-        //cod_2: Entorno:  0 Beta, 1 Produccion
-        //cod_3: ruc
-        //cod_4: usuario secundario USU(segun seha beta o producción)
-        //cod_5: usuario secundario PASSWORD(segun seha beta o producción)
-        //cod_6: Accion:   1 enviar documento a Sunat --  2 enviar a anular  --  3 enviar ticket
-        //cod_7: serie de documento
-        //cod_8: numero ticket
+    $ruta_dominio   = $obj_variables_diversas_model->carpeta_actual();
+    $user_sec_usu   = ($empresa['modo'] == 1) ? $empresa['usu_secundario_produccion_user'] : 'MODDATOS';
+    $user_sec_pass  = ($empresa['modo'] == 1) ? $empresa['usu_secundario_produccion_password'] : 'moddatos';
+    $url = $ruta_dominio."/ws_sunat/index.php?numero_documento=".$nombre_archivo."&cod_1=1&cod_2=".$empresa['modo']."&cod_3=".$empresa['ruc']."&cod_4=".$user_sec_usu."&cod_5=".$user_sec_pass."&cod_6=1";
+    
+    $data = file_get_contents($url);
+    $info = json_decode($data);
 
-        $ruta_dominio   = $obj_variables_diversas_model->carpeta_actual();
-        $user_sec_usu   = ($empresa['modo'] == 1) ? $empresa['usu_secundario_produccion_user'] : 'MODDATOS';
-        $user_sec_pass  = ($empresa['modo'] == 1) ? $empresa['usu_secundario_produccion_password'] : 'moddatos';
-        $url = $ruta_dominio."/ws_sunat/index.php?numero_documento=".$nombre_archivo."&cod_1=1&cod_2=".$empresa['modo']."&cod_3=".$empresa['ruc']."&cod_4=".$user_sec_usu."&cod_5=".$user_sec_pass."&cod_6=1";
-        //echo $url;exit;
-        //$respuesta = getFirma($nombre_archivo);
-        //var_dump($respuesta);exit;
-        
-        $data = file_get_contents($url);
-        $info = json_decode($data);
+    $jsondata = array(
+        'data'        =>  $info
+    );
+    echo json_encode($jsondata, JSON_UNESCAPED_UNICODE);
+}
 
-        $jsondata = array(
-            'data'        =>  $info
-        );
-        echo json_encode($jsondata, JSON_UNESCAPED_UNICODE);
-    }
 
-function crear_pdf($empresa, $cliente, $venta, $detalle, $nombre, $cuotas, $guias_adjuntas, $obj_variables_diversas_model){
+
+function crear_pdf($empresa, $cliente, $venta, $detalle, $nombre, $cuotas, $guias_adjuntas, $obj_variables_diversas_model) {
+    // Calcular montos totales
     $total_igv          = ($venta['total_igv'] != null) ? $venta['total_igv'] : 0.0;
-    $total_gravada      = ($venta['total_gravada'] == null)     ? 0 : $venta['total_gravada'];
-    $total_exonerada    = ($venta['total_exonerada'] == null)   ? 0 : $venta['total_exonerada'];
-    $total_inafecta     = ($venta['total_inafecta'] == null)    ? 0 : $venta['total_inafecta'];    
+    $total_gravada      = ($venta['total_gravada'] == null) ? 0 : $venta['total_gravada'];
+    $total_exonerada    = ($venta['total_exonerada'] == null) ? 0 : $venta['total_exonerada'];
+    $total_inafecta     = ($venta['total_inafecta'] == null) ? 0 : $venta['total_inafecta'];    
     $total_a_pagar      = number_format(($total_gravada + $total_exonerada + $total_inafecta + $total_igv), 2, '.', '');
     $venta['total_a_pagar'] = $total_a_pagar;
   
     $array_moneda = $obj_variables_diversas_model->monedas($venta['moneda_id']);
     
     $detraccion = 0;
-    if(isset($venta['detraccion_codigo']) && ($venta['detraccion_codigo'] != '')){    
-        $detraccion = number_format($venta['detraccion_porcentaje'] * $total_a_pagar * (0.01) ,0);
+    if(isset($venta['detraccion_codigo']) && ($venta['detraccion_codigo'] != '')) {    
+        $detraccion = number_format($venta['detraccion_porcentaje'] * $total_a_pagar * (0.01), 0);
     }
-        
+    
+    // Convertir el total a letras
     $num = new Numletras();    
-    $totalVenta = explode(".", number_format(($total_a_pagar - $detraccion), 2, '.',''));
+    $totalVenta = explode(".", number_format(($total_a_pagar - $detraccion), 2, '.', ''));
     $totalLetras = $num->num2letras($totalVenta[0]);
     $totalLetras = 'Son: '.$totalLetras.' con '.$totalVenta[1].'/100 ' . $array_moneda['moneda'];
 
+    // Crear el objeto PDF
     $pdf = new PDF_MC_Table();
     $pdf->SetMargins(8, 8, 2);
     $pdf->AddPage();
     $pdf->SetFont('Arial','',12);
     
+    // Determinar el tipo de documento
     switch ($venta['tipo_documento_codigo']) {
         case '01':
             $tipo_documento = 'FACTURA';
@@ -488,27 +466,28 @@ function crear_pdf($empresa, $cliente, $venta, $detalle, $nombre, $cuotas, $guia
             break;
     }
 
+    // Agregar información del documento
     $pdf->SetFont('Arial','',18);
-    $pdf->Cell(90,12,utf8_decode($tipo_documento." ELECTRÓNICA"), 0, 1, 'L');    
+    $pdf->Cell(90,12, mb_convert_encoding($tipo_documento." ELECTRÓNICA", 'ISO-8859-1', 'UTF-8'), 0, 1, 'L');    
     $pdf->SetFont('Arial','',12);
     $pdf->Cell(74,5,"RUC: ".$empresa["ruc"],0,1,'L');
     $pdf->SetFont('Arial','B',10);
-    $pdf->Cell(74, 5, utf8_decode($empresa["razon_social"]), 0, 1, 'L');
+    $pdf->Cell(74, 5, mb_convert_encoding($empresa["razon_social"], 'ISO-8859-1', 'UTF-8'), 0, 1, 'L');
     $pdf->SetFont('Arial','',10);
-    $pdf->MultiCell(74,5, utf8_decode($empresa["domicilio_fiscal"]));            
+    $pdf->MultiCell(74,5, mb_convert_encoding($empresa["domicilio_fiscal"], 'ISO-8859-1', 'UTF-8'));
+    
+    
     $forma_pago = ($venta['forma_pago_id'] == 1) ? 'contado' : 'crédito';
-    $pdf->Cell(74, 5, 'Forma de pago: '. utf8_decode($forma_pago), 0, 1, 'L');    
+    $pdf->Cell(74, 5, 'Forma de pago: '. mb_convert_encoding($forma_pago, 'ISO-8859-1', 'UTF-8'), 0, 1, 'L');      
 
-//    $pdf->SetFont('Arial','',9);
-//    $pdf->Cell(74, 6, $empresa["nombre_comercial"], 0, 1, 'C');
-
+    // Logo de la empresa
     $tamano_x = 80;
     $tamano_y = 35; 
     $pdf->Image('logo.PNG',120,8,$tamano_x,$tamano_y);
     $pdf->Ln($tamano_y);
     
+    // Información del cliente
     $pdf->SetY(45);
-        
     switch ($cliente['codigo_tipo_entidad']) {
         case '1':
             $tipo_documento_cliente = 'DNI';
@@ -516,18 +495,19 @@ function crear_pdf($empresa, $cliente, $venta, $detalle, $nombre, $cuotas, $guia
         case '6':
             $tipo_documento_cliente = 'RUC';
             break;        
-    }        
+    }
     $pdf->SetFont('Arial','B',10);
     $pdf->Cell(14, 5, 'Cliente:',0,0,'L');
     $pdf->SetFont('Arial','',10);
-    $pdf->MultiCell(120,5, utf8_decode($cliente["razon_social_nombres"]));
-    $pdf->Cell(120, 5,utf8_decode($tipo_documento_cliente . ": ". $cliente['numero_documento']),0,1,'L');    
-    $pdf->Cell(120, 5,utf8_decode($cliente['cliente_direccion']),0,1,'L');
-    $pdf->Cell(120, 5,'Moneda: '. utf8_decode($array_moneda['moneda']), 0, 1, 'L');
+    $pdf->MultiCell(120,5, mb_convert_encoding($cliente["razon_social_nombres"], 'ISO-8859-1', 'UTF-8'));
+    $pdf->Cell(120, 5, mb_convert_encoding($tipo_documento_cliente . ": ". $cliente['numero_documento'], 'ISO-8859-1', 'UTF-8'), 0, 1, 'L');    
+    $pdf->Cell(120, 5, mb_convert_encoding($cliente['cliente_direccion'], 'ISO-8859-1', 'UTF-8'), 0, 1, 'L');
+    $pdf->Cell(120, 5, 'Moneda: '. mb_convert_encoding($array_moneda['moneda'], 'ISO-8859-1', 'UTF-8'), 0, 1, 'L');
     if(isset($venta['tipo_cambio']) && ($venta['tipo_cambio'] != '') && ($venta['moneda_id'] != '1')){
         $pdf->Cell(120, 5,'Tipo cambio: '. $venta['tipo_cambio'], 0, 1, 'L');
     }
     
+    // Información adicional
     $pdf->SetY(50);
     $pdf->SetX(130);
     $pdf->SetFont('Arial','B',13);
@@ -543,46 +523,51 @@ function crear_pdf($empresa, $cliente, $venta, $detalle, $nombre, $cuotas, $guia
         $pdf->SetY(60);
         $pdf->SetX(130);
         $motivo = $obj_variables_diversas_model->tipo_nota_credito($venta['relacionado_motivo_codigo']);
-        $pdf->Cell(74,7,"Motivo:: ".utf8_decode($motivo), 0, 1, 'L');
+        $pdf->Cell(74,7,"Motivo: ".mb_convert_encoding($motivo, 'ISO-8859-1', 'UTF-8'), 0, 1, 'L');
         $aumento += 10;
     }
     
     $pdf->SetY(55 + $aumento);
     $pdf->SetX(130);
     $pdf->SetFont('Arial','',10);    
-    $pdf->Cell(74,7,"Fecha/hora emision:".$venta["fecha_emision"],0,0,'L');
+    $pdf->Cell(74,7,"Fecha/hora emisión: ".$venta["fecha_emision"],0,0,'L');
     $pdf->SetY(60 + $aumento);
     $pdf->SetX(130);    
     $pdf->Cell(74,7,"Vendedor: Juan Perez",0,0,'L');
     $pdf->Ln(10);        
-    
+
+    // Encabezado de la tabla de detalles
     $pdf->Cell(15,7,"Cant.", 0,0,'L');
     $pdf->Cell(15,7,"U.M.", 0,0,'L');
     $pdf->Cell(100,7,"Producto", 0,0,'L');
     $pdf->Cell(30,7,"Precio", 0,0,'R');
     $pdf->Cell(30,7,"Sub-Total", 0,0,'R');
     $pdf->Ln(6);
-        
+    
+    // Cálculo del impuesto
     $impuesto = 1.18;
     
-    $pdf->SetWidths(Array(15,15,110,25,25));
+    // Establecer las columnas de la tabla de productos
+    $pdf->SetWidths(array(15,15,110,25,25));
     $pdf->SetLineHeight(5);
+    
+    // Iterar sobre los productos y agregarlos al PDF
     foreach ($detalle as $item){
-        $pdf->Row(Array(
+        $pdf->Row(array(
             $item['cantidad'],
             $item['codigo_unidad'],
-            utf8_decode($item['producto']),
+            mb_convert_encoding($item['producto'], 'ISO-8859-1', 'UTF-8'),
             $item['precio_base'],
             number_format(($item['cantidad']*($item['precio_base']*$impuesto)), 2)
         ));
-    }   
+    }
     
+    // Total de la factura
     $pdf->Ln(7);
     $pdf->SetFont('Arial', '', 11);
     $pdf->Cell(150, 6, "", 0, 0, 'R');
     $pdf->Cell(20, 6, "Gravada: ", 0, 0, 'L');
     $pdf->Cell(20, 6, $array_moneda['simbolo'] . " " . $venta['total_gravada'], 0, 0, 'R');
-    //$pdf->Cell(20, 6, "S/. " . $venta['total_gravada'], 0, 0, 'R');
     $pdf->Ln(5);
     
     $pdf->Cell(150,6,"",0,0,'R');
@@ -590,7 +575,7 @@ function crear_pdf($empresa, $cliente, $venta, $detalle, $nombre, $cuotas, $guia
     $pdf->Cell(20,6, $array_moneda['simbolo'] . " " . $venta['total_igv'],0,0,'R');
     $pdf->Ln(5);
 
-
+    // Total final
     $pdf->Cell(150, 6,"",0,0,'R');
     $pdf->SetFont('Arial', 'B', 11);
     $pdf->Cell(20, 6,"Total:",0,0,'L');
@@ -598,16 +583,16 @@ function crear_pdf($empresa, $cliente, $venta, $detalle, $nombre, $cuotas, $guia
     $pdf->Cell(20, 6, $array_moneda['simbolo'] . " " . ($total_a_pagar),0,1,'R');
     $pdf->Ln(5);
     
+    // Detracción si aplica
     if(isset($venta['detraccion_codigo']) && ($venta['detraccion_codigo'] != '')){
         $detraccion = number_format($venta['detraccion_porcentaje'] * $total_a_pagar * (0.01) ,0);
         $pdf->Cell(140,6,"",0,0,'R');
-        $pdf->Cell(25,6,utf8_decode("Detracción: "),0,0,'L');
+        $pdf->Cell(25,6,mb_convert_encoding("Detracción: ", 'ISO-8859-1', 'UTF-8'), 0,0,'L');
         if($venta['moneda_id'] == '1'){
             $pdf->Cell(25,6,$array_moneda['simbolo'] . " " . $detraccion.".00", 0,0,'R');   
         }else{
             $pdf->Cell(25,6,"S/. " . number_format($detraccion * $venta['tipo_cambio'], 2), 0,0,'R');    
         }        
-        
         $pdf->Ln(5);
         
         $pdf->Cell(140,6,"",0,0,'R');
@@ -615,21 +600,25 @@ function crear_pdf($empresa, $cliente, $venta, $detalle, $nombre, $cuotas, $guia
         $pdf->Cell(25,6,$array_moneda['simbolo'] . " " . number_format($total_a_pagar - ($venta['detraccion_porcentaje'] * $total_a_pagar * (0.01)) ,0).".00" , 0,0,'R');
         $pdf->Ln(5);
     }
-    
-    $pdf->MultiCell(0,5, utf8_decode($totalLetras));
+
+    // Convertir el total en letras
+    $pdf->MultiCell(0,5, mb_convert_encoding($totalLetras, 'ISO-8859-1', 'UTF-8'));
             
-    
     $pdf->Ln(85);
+
+    // Cuenta de detracción si existe
     if(isset($empresa['cuenta_detraccion']) && ($empresa['cuenta_detraccion'] != '')){
         $pdf->SetFont('Arial', 'B', 11);
-        $pdf->Cell(38, 6, utf8_decode("Cuenta Detracción: "), 0, 0, 'L');
+        $pdf->Cell(38, 6, mb_convert_encoding("Cuenta Detracción: ", 'ISO-8859-1', 'UTF-8'), 0, 0, 'L');
         $pdf->SetFont('Arial', '', 11);
         $pdf->Cell(20, 6, $empresa['cuenta_detraccion'], 0, 1, 'L');
     }
-    
-    $pdf->Ln(1);
-    $pdf->MultiCell(0,10, utf8_decode($venta['nota']));
 
+    // Nota adicional
+    $pdf->Ln(1);
+    $pdf->MultiCell(0,10, mb_convert_encoding($venta['nota'], 'ISO-8859-1', 'UTF-8'));
+
+    // Detalle de cuotas si existen
     if(($cuotas != array()) && (count($cuotas) > 0)){
         $pdf->Cell(20,10, 'CUOTAS', 0, 0, 'L');
         $pdf->Ln(5);
@@ -647,15 +636,13 @@ function crear_pdf($empresa, $cliente, $venta, $detalle, $nombre, $cuotas, $guia
         $pdf->Ln(5);
         $i++;
     }
-    
-    /////////////////////////////////////////////////////
-    /////////////GUIAS ADJUNTAS
-    //$aumento = 1;
+
+    // Guias de remisión adjuntas si existen
     if(count($guias_adjuntas) > 0){
         $pdf->SetY(185 + $aumento);
         $pdf->SetX(140);
         $pdf->SetFont('Arial','B',10);
-        $pdf->Cell(74, 7, utf8_decode("Guias de Remisión:"), 0, 0, 'L');    
+        $pdf->Cell(74, 7, mb_convert_encoding("Guias de Remisión:", 'ISO-8859-1', 'UTF-8'), 0, 0, 'L');  
         $pdf->Ln(2);
 
         $pdf->SetFont('Arial','',10);
@@ -663,7 +650,6 @@ function crear_pdf($empresa, $cliente, $venta, $detalle, $nombre, $cuotas, $guia
         $contador_y = 1;
         $contador_x = 1;        
         foreach ($guias_adjuntas as $valores){
-            $xx = '';
             if(($i % 3) == 0 ){
                 $contador_y += 3;
                 $contador_x = 0;
@@ -671,39 +657,36 @@ function crear_pdf($empresa, $cliente, $venta, $detalle, $nombre, $cuotas, $guia
 
             $pdf->SetY(190 + $aumento + $contador_y + $contador_y);
             $pdf->SetX(140 + $contador_x);
-
             $pdf->Cell(25,10, $valores['guia_serie']."-".$valores['guia_numero'], 0, 0, 'L');
-
             $contador_x += 20;
             $i++;
         }        
-    }        
-    //////////////////////////////////////////////////////    
-    
+    }
+
+    // Generar el código QR
     $rutaqr = GetImgQr($venta, $empresa, $tipo_documento, $cliente);            
     $pdf->Image($rutaqr, 80, 240, 40, 40);    
     $respuesta  = getFirma($nombre);                
-    
+
+    // Firma
     $pdf->SetY(230);
     $pdf->Cell(190,8, $respuesta,0,1,'C');
     
+    // Guardar el PDF en la carpeta correspondiente
     $pdf->Output('files/facturacion_electronica/PDF/'. $nombre .'.pdf', 'F');    
 }
 
 function GetImgQr($venta, $empresa, $tipo_documento, $cliente)  {
     $textoQR = '';
-    $textoQR .= $empresa['ruc']."|";//RUC EMPRESA
-
-    $textoQR .= $tipo_documento."|";//TIPO DE DOCUMENTO 
-    $textoQR .= $venta['serie']."|";//SERIE
-    $textoQR .= $venta['numero']."|";//NUMERO
-    $textoQR .= $venta['total_igv']."|";//MTO TOTAL IGV
-    $textoQR .= $venta['total_a_pagar']."|";//MTO TOTAL DEL COMPROBANTE
-    $textoQR .= $venta['fecha_emision']."|";//FECHA DE EMISION 
-
-    //tipo de cliente     
-    $textoQR .= $cliente['codigo_tipo_entidad']."|";//TIPO DE DOCUMENTO ADQUIRENTE 
-    $textoQR .= $cliente['numero_documento']."|";//NUMERO DE DOCUMENTO ADQUIRENTE 
+    $textoQR .= $empresa['ruc']."|";// RUC EMPRESA
+    $textoQR .= $tipo_documento."|";// TIPO DE DOCUMENTO 
+    $textoQR .= $venta['serie']."|";// SERIE
+    $textoQR .= $venta['numero']."|";// NÚMERO
+    $textoQR .= $venta['total_igv']."|";// MTO TOTAL IGV
+    $textoQR .= $venta['total_a_pagar']."|";// MTO TOTAL DEL COMPROBANTE
+    $textoQR .= $venta['fecha_emision']."|";// FECHA DE EMISIÓN 
+    $textoQR .= $cliente['codigo_tipo_entidad']."|";// TIPO DE DOCUMENTO ADQUIRENTE 
+    $textoQR .= $cliente['numero_documento']."|";// NÚMERO DE DOCUMENTO ADQUIRENTE 
 
     $nombreQR = $venta['tipo_documento_codigo'].'-'.$venta['serie'].'-'.$venta['numero'];
     QRcode::png($textoQR, "files/facturacion_electronica/qr/".$nombreQR.".png", QR_ECLEVEL_L, 10, 2);
@@ -715,7 +698,7 @@ function getFirma($NomArch){
     $ruta   = 'files/facturacion_electronica/FIRMA/';
     $xml    = simplexml_load_file($ruta. $NomArch . '.xml');
     foreach ($xml->xpath('//ds:DigestValue') as $response) {
-
+        // Obtener la firma del XML
     }
     return $response;
 }

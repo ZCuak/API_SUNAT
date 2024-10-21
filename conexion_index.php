@@ -1,36 +1,40 @@
 <?php
-header('Content-Type: text/html; charset=UTF-8');
-require('lib/pclzip.lib.php'); // Librería que comprime archivos en .ZIP
+declare(strict_types=1); // Activar el tipado estricto
 
-//URL para enviar las solicitudes a SUNAT
+header('Content-Type: text/html; charset=UTF-8');
+
+// URL para enviar las solicitudes a SUNAT
 $wsdlURL = 'https://e-beta.sunat.gob.pe/ol-ti-itcpfegem-beta/billService?wsdl';
 
-// NOMBRE DE ARCHIVO A PROCESAR.
-//$NomArch = '20532710066-01-F002-00000026';
-//$NomArch = '20604051984-01-F001-11';
+// NOMBRE DE ARCHIVO A PROCESAR
 $NomArch = '20604051984-01-F001-100';
-//$NomArch = '20604051984-07-FC01-6';
-## =============================================================================
-## Creación del archivo .ZIP
-$zip = new PclZip($NomArch . ".zip");
-$zip->create($NomArch . ".xml");
-chmod($NomArch . ".zip", 0777);
-# ==============================================================================
-# Procedimiento para enviar comprobante a la SUNAT
 
+// Crear el archivo .ZIP usando la clase nativa ZipArchive
+$zip = new ZipArchive();
+$zipFileName = $NomArch . ".zip";
+
+if ($zip->open($zipFileName, ZipArchive::CREATE) === TRUE) {
+    $zip->addFile($NomArch . ".xml", basename($NomArch . ".xml"));
+    $zip->close();
+    chmod($zipFileName, 0777);
+} else {
+    die("Error al crear el archivo ZIP");
+}
+
+// Clase personalizada para la llamada SOAP
 class feedSoap extends SoapClient {
+    public string $XMLStr = "";
 
-    public $XMLStr = "";
-
-    public function setXMLStr($value) {
+    public function setXMLStr(string $value): void {
         $this->XMLStr = $value;
     }
 
-    public function getXMLStr() {
+    public function getXMLStr(): string {
         return $this->XMLStr;
     }
 
-    public function __doRequest($request, $location, $action, $version, $one_way = 0) {
+    // Ajuste en el tipo booleano del parámetro $one_way
+    public function __doRequest(string $request, string $location, string $action, int $version, bool $one_way = false): string {
         $request = $this->XMLStr;
         $dom = new DOMDocument('1.0');
         try {
@@ -39,27 +43,25 @@ class feedSoap extends SoapClient {
             die($e->code);
         }
         $request = $dom->saveXML();
-        //Solicitud
-        return parent::__doRequest($request, $location, $action, $version, $one_way = 0);
+        return parent::__doRequest($request, $location, $action, $version, $one_way);
     }
 
-    public function SoapClientCall($SOAPXML) {
-        return $this->setXMLStr($SOAPXML);
+    public function SoapClientCall(string $SOAPXML): void {
+        $this->setXMLStr($SOAPXML);
     }
-
 }
 
-function soapCall($wsdlURL, $callFunction = "", $XMLString) {
+function soapCall(string $wsdlURL, string $callFunction, string $XMLString): string {
     $client = new feedSoap($wsdlURL, array('trace' => true));
-    $reply = $client->SoapClientCall($XMLString);
-    //echo "REQUEST:\n" . $client->__getFunctions() . "\n";
-    $client->__call("$callFunction", array(), array());
-    //$request = prettyXml($client->__getLastRequest());
-    //echo highlight_string($request, true) . "<br/>\n";
+    $client->SoapClientCall($XMLString);
+
+    // Aquí en lugar de __call usamos directamente la llamada como un método
+    $response = $client->$callFunction();
+
     return $client->__getLastResponse();
 }
 
-//Estructura del XML para la conexión
+// Estructura del XML para la conexión
 $XMLString = '<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ser="http://service.sunat.gob.pe" xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd">
  <soapenv:Header>
@@ -78,34 +80,32 @@ $XMLString = '<?xml version="1.0" encoding="UTF-8"?>
  </soapenv:Body>
 </soapenv:Envelope>';
 
-//Realizamos la llamada a nuestra función
-$result = soapCall($wsdlURL, $callFunction = "sendBill", $XMLString);
+// Realizamos la llamada a nuestra función
+$result = soapCall($wsdlURL, 'sendBill', $XMLString);
+
 descargarRespone($NomArch, $result);
 $response = leerXmlResponse($NomArch);
 descargarCDR_ZIP($NomArch, $response);
 obtenerCDR_XML($NomArch);
 $respuesta = leerCDR_XML($NomArch);
 var_dump($respuesta);
-elminarArchivos($NomArch);
+eliminarArchivos($NomArch);
 
-//Descargamos el Archivo Response
-function descargarRespone($NomArch, $result){
+// Funciones auxiliares
+
+function descargarRespone(string $NomArch, string $result): void {
     $archivo = fopen('C' . $NomArch . '.xml', 'w+');
     fputs($archivo, $result);
     fclose($archivo);
 }
 
-/* LEEMOS EL ARCHIVO XML */
-function leerXmlResponse($NomArch){
+function leerXmlResponse(string $NomArch): string {
     $xml = simplexml_load_file('C' . $NomArch . '.xml');
-    foreach ($xml->xpath('//applicationResponse') as $response) {
-
-    }
-    return $response;
+    foreach ($xml->xpath('//applicationResponse') as $response) {}
+    return (string) $response;
 }
 
-/* AQUI DESCARGAMOS EL ARCHIVO CDR(CONSTANCIA DE RECEPCIÓN) */
-function descargarCDR_ZIP($NomArch, $response){
+function descargarCDR_ZIP(string $NomArch, string $response): void {
     $cdr = base64_decode($response);
     $archivo = fopen('R-' . $NomArch . '.zip', 'w+');
     fputs($archivo, $cdr);
@@ -113,37 +113,37 @@ function descargarCDR_ZIP($NomArch, $response){
     chmod('R-' . $NomArch . '.zip', 0777);
 }
 
-function obtenerCDR_XML($NomArch){
-    $archive = new PclZip('R-' . $NomArch . '.zip');
-    if ($archive->extract() == 0) {
-        die("Error : " . $archive->errorInfo(true));
-    } else {
+function obtenerCDR_XML(string $NomArch): void {
+    $zip = new ZipArchive();
+    $zipFileName = 'R-' . $NomArch . '.zip';
+    
+    if ($zip->open($zipFileName) === TRUE) {
+        $zip->extractTo('.');
+        $zip->close();
         chmod('R-' . $NomArch . '.xml', 0777);
+    } else {
+        die("Error al extraer el archivo ZIP");
     }
 }
 
-functIon leerCDR_XML($NomArch){        
-    $resultado = array();
-    //echo "abc";exit;        
-    if(file_exists('R-' . $NomArch . '.xml')){            
-        $library = new SimpleXMLElement('R-' . $NomArch . '.xml', null, true);
-
+function leerCDR_XML(string $NomArch): array {
+    $resultado = [];
+    if (file_exists('R-' . $NomArch . '.xml')) {
+        // Cambié el 'null' por '0' en el tercer parámetro, ya que debe ser un entero
+        $library = new SimpleXMLElement('R-' . $NomArch . '.xml', 0, true);
         $ns = $library->getDocNamespaces();
         $ext1 = $library->children($ns['cac']);
         $ext2 = $ext1->DocumentResponse;
-        $ext3 = $ext2->children($ns['cac']);            
+        $ext3 = $ext2->children($ns['cac']);
         $ext4 = $ext3->children($ns['cbc']);
-
-        $resultado = array(
-            'respuesta_sunat_codigo' => trim($ext4->ResponseCode),
-            'respuesta_sunat_descripcion' => trim($ext4->Description)
-        );
+        $resultado = [
+            'respuesta_sunat_codigo' => trim((string) $ext4->ResponseCode),
+            'respuesta_sunat_descripcion' => trim((string) $ext4->Description)
+        ];
     }
     return $resultado;
 }
 
-function elminarArchivos($NomArch){
-    /* Eliminamos el Archivo Response */
-    unlink('C' . $NomArch . '.xml');    
+function eliminarArchivos(string $NomArch): void {
+    unlink('C' . $NomArch . '.xml');
 }
-
