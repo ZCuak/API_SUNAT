@@ -2,8 +2,6 @@
 // Configurar error_reporting para solo mostrar errores críticos (excluyendo advertencias y notificaciones)
 error_reporting(E_ERROR | E_PARSE);
 
-require('lib/pclzip.lib.php'); // Librería que comprime archivos en .ZIP
-
 // Definir ruta basada en el parámetro GET
 $ruta = ($_GET['cod_6'] == '0') ? '../files/facturacion_electronica/FIRMA/' : '../files/facturacion_electronica/BAJA/FIRMA/';
 $NomArch = $_GET['numero_documento'] ?? ''; // Manejar valor nulo en caso de que 'numero_documento' no esté presente en la URL
@@ -13,14 +11,19 @@ if (empty($NomArch)) {
 }
 
 ## =============================================================================
-## Creación del archivo .ZIP
-$zip = new PclZip($ruta . $NomArch . ".zip");
+## Creación del archivo .ZIP con ZipArchive
+$zip = new ZipArchive();
+$zipFile = $ruta . $NomArch . ".zip";
 
-if (!file_exists($ruta . $NomArch . ".zip")) {
-    $zip->add($ruta . $NomArch . ".xml", PCLZIP_OPT_REMOVE_PATH, $ruta, PCLZIP_OPT_ADD_PATH, '');
+if (!file_exists($zipFile)) {
+    if ($zip->open($zipFile, ZipArchive::CREATE) === TRUE) {
+        $zip->addFile($ruta . $NomArch . '.xml', basename($NomArch . '.xml'));
+        $zip->close();
+        chmod($zipFile, 0777);
+    } else {
+        die(json_encode(['success' => false, 'message' => 'Error al crear el archivo ZIP.']));
+    }
 }
-
-chmod($ruta . $NomArch . ".zip", 0777);
 
 # ==============================================================================
 
@@ -90,7 +93,6 @@ $XMLString = '
     </soapenv:Body>
 </soapenv:Envelope>';
 
-// Realizamos la llamada a nuestra función
 $error_mensaje = '';
 $error_existe = 0;
 $result = '';
@@ -104,23 +106,24 @@ try {
     fclose($archivo);
 
     // Procesar la respuesta (CDR - Constancia de Recepción)
-//    $xml = simplexml_load_file('C' . $NomArch . '.xml');
-//    foreach ($xml->xpath('//applicationResponse') as $response) {
-//        // Procesar respuesta
-//    }
-//    // Decodificar el archivo CDR
-//    $cdr = base64_decode($response);
-//    $archivo = fopen($ruta . 'R-' . $NomArch . '.zip', 'w+');
-//    fwrite($archivo, $cdr);
-//    fclose($archivo);
-//    chmod($ruta . 'R-' . $NomArch . '.zip', 0777);
-//    $archive = new PclZip($ruta . 'R-' . $NomArch . '.zip');
-//    if ($archive->extract() == 0) {
-//        throw new Exception("Error: " . $archive->errorInfo(true));
-//    } else {
-//        chmod('R-' . $NomArch . '.xml', 0777);
-//    }
-//    unlink('C' . $NomArch . '.xml');
+    // Decodificar el archivo CDR
+    // Asumimos que el contenido está en la variable $response (después del procesamiento)
+    $cdr = base64_decode($response);
+    $archivo = fopen($ruta . 'R-' . $NomArch . '.zip', 'w+');
+    fwrite($archivo, $cdr);
+    fclose($archivo);
+    chmod($ruta . 'R-' . $NomArch . '.zip', 0777);
+
+    // Extraer el archivo ZIP usando ZipArchive
+    $zip = new ZipArchive();
+    if ($zip->open($ruta . 'R-' . $NomArch . '.zip') === TRUE) {
+        $zip->extractTo($ruta);  // Extraer a la ruta especificada
+        $zip->close();
+        chmod('R-' . $NomArch . '.xml', 0777);  // Cambiar permisos al archivo extraído
+    } else {
+        throw new Exception("Error al extraer el archivo ZIP.");
+    }
+    unlink('C' . $NomArch . '.xml');
 
 } catch (Exception $e) {
     $error_existe = 1;
@@ -136,4 +139,3 @@ $jsondata = array(
 );
 
 echo json_encode($jsondata, JSON_UNESCAPED_UNICODE);
-

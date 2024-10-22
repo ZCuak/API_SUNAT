@@ -4,7 +4,7 @@ declare(strict_types=1); // Activar el tipado estricto
 error_reporting(E_ERROR | E_WARNING | E_PARSE);
 
 // Reemplazamos PclZip con ZipArchive
-require('lib/pclzip.lib.php');
+
 
 // Validar que los parámetros requeridos existan
 if (!isset($_GET['cod_6'], $_GET['cod_7'], $_GET['numero_documento'])) {
